@@ -1,265 +1,28 @@
 import streamlit as st
 import json
-import html
 import os
 import subprocess
 import sys
 
+from ui.styles import get_css
+from ui.components import render_log_card, viral_color, ts_to_seconds
+
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(APP_DIR, "output")
-INPUT_DIR = os.path.join(APP_DIR, "input")
+INPUT_DIR  = os.path.join(APP_DIR, "input")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
-os.makedirs(INPUT_DIR, exist_ok=True)
+os.makedirs(INPUT_DIR,  exist_ok=True)
 
 st.set_page_config(page_title="AutoClipper", layout="wide", initial_sidebar_state="expanded")
-
-# ── CSS ───────────────────────────────────────────────────────
-st.markdown("""
-<style>
-/* Hide default chrome */
-#MainMenu, footer, header { visibility: hidden; }
-
-/* Sidebar */
-[data-testid="stSidebar"] {
-    background: #0f0f0f;
-    border-right: 1px solid #222;
-    min-width: 280px !important;
-    max-width: 280px !important;
-}
-[data-testid="stSidebar"] * { color: #e0e0e0 !important; }
-[data-testid="stSidebar"] .stSelectbox label,
-[data-testid="stSidebar"] .stTextInput label { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: #666 !important; }
-
-/* Main bg */
-.stApp { background: #111; }
-
-/* Headings */
-h1, h2, h3 { color: #f0f0f0 !important; }
-
-/* Text areas — monospace */
-textarea {
-    font-family: "JetBrains Mono", "Fira Code", monospace !important;
-    font-size: 12px !important;
-    background: #1a1a1a !important;
-    border: 1px solid #2a2a2a !important;
-    border-radius: 8px !important;
-    color: #d4d4d4 !important;
-}
-
-/* Primary button */
-div[data-testid="stButton"] button[kind="primary"] {
-    background: #7c3aed !important;
-    border: none !important;
-    border-radius: 6px !important;
-    font-weight: 600 !important;
-    letter-spacing: .03em !important;
-}
-div[data-testid="stButton"] button[kind="primary"]:hover {
-    background: #6d28d9 !important;
-}
-
-/* Ghost button (Clear) */
-div[data-testid="stButton"] button[kind="secondary"] {
-    background: transparent !important;
-    border: 1px solid #333 !important;
-    border-radius: 6px !important;
-    color: #888 !important;
-}
-div[data-testid="stButton"] button[kind="secondary"]:hover {
-    border-color: #555 !important;
-    color: #ccc !important;
-}
-
-/* Tabs */
-[data-testid="stTabs"] button {
-    font-size: 13px !important;
-    font-weight: 500 !important;
-    color: #666 !important;
-}
-[data-testid="stTabs"] button[aria-selected="true"] {
-    color: #a78bfa !important;
-    border-bottom-color: #7c3aed !important;
-}
-
-/* Clip row card */
-.clip-card {
-    background: #1a1a1a;
-    border: 1px solid #2a2a2a;
-    border-radius: 10px;
-    padding: 14px 16px;
-    margin-bottom: 10px;
-    display: flex;
-    align-items: center;
-    gap: 14px;
-}
-.clip-num {
-    font-size: 11px;
-    font-weight: 700;
-    color: #7c3aed;
-    background: #2d1b69;
-    border-radius: 5px;
-    padding: 2px 8px;
-    white-space: nowrap;
-}
-.clip-caption {
-    flex: 1;
-    font-size: 13px;
-    color: #d4d4d4;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-.clip-meta {
-    font-size: 11px;
-    color: #555;
-    white-space: nowrap;
-}
-.clip-bar-wrap {
-    width: 80px;
-    background: #222;
-    border-radius: 3px;
-    height: 4px;
-    overflow: hidden;
-}
-.clip-bar-fill {
-    height: 4px;
-    background: #7c3aed;
-    border-radius: 3px;
-}
-.viral-dot {
-    display: inline-block;
-    width: 8px; height: 8px;
-    border-radius: 50%;
-    margin-right: 4px;
-}
-
-/* Status badge */
-.badge {
-    display: inline-block;
-    padding: 3px 10px;
-    border-radius: 20px;
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: .05em;
-    text-transform: uppercase;
-}
-.badge-idle    { background:#1e1e1e; color:#555; border:1px solid #2a2a2a; }
-.badge-ready   { background:#052e16; color:#4ade80; border:1px solid #166534; }
-.badge-error   { background:#2d0a0a; color:#f87171; border:1px solid #7f1d1d; }
-.badge-running { background:#1c1830; color:#a78bfa; border:1px solid #4c1d95; }
-
-/* dataframe */
-[data-testid="stDataFrame"] { border-radius: 8px; overflow: hidden; }
-
-/* section label */
-.section-label {
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: .1em;
-    color: #555;
-    margin-bottom: 8px;
-    margin-top: 24px;
-}
-
-/* terminal log */
-.terminal-card {
-    margin-top: 14px;
-    border: 1px solid #2a2a2a;
-    border-radius: 8px;
-    overflow: hidden;
-    background: #07090c;
-}
-.terminal-header {
-    height: 34px;
-    padding: 0 12px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    background: #171717;
-    border-bottom: 1px solid #2a2a2a;
-    color: #8f8f8f;
-    font-size: 11px;
-    font-family: "JetBrains Mono", "Fira Code", monospace;
-}
-.terminal-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    display: inline-block;
-}
-.terminal-red { background: #ef4444; }
-.terminal-yellow { background: #f59e0b; }
-.terminal-green { background: #22c55e; }
-.terminal-title {
-    flex: 1;
-    color: #d4d4d4;
-}
-.terminal-status {
-    color: #777;
-}
-.terminal-body {
-    max-height: 460px;
-    overflow-y: auto;
-    padding: 12px 14px;
-    background: #07090c;
-    color: #d7dde8;
-    font-size: 12px;
-    line-height: 1.45;
-    font-family: "JetBrains Mono", "Fira Code", "SFMono-Regular", Consolas, monospace;
-    display: flex;
-    flex-direction: column-reverse;
-}
-.terminal-line {
-    min-height: 17px;
-    white-space: pre-wrap;
-    word-break: break-word;
-}
-.terminal-empty {
-    color: #6b7280;
-}
-</style>
-""", unsafe_allow_html=True)
-
-
-def render_log_card(placeholder, log_lines, status_label="running", max_lines=350):
-    visible_lines = log_lines[-max_lines:]
-    hidden_count = max(0, len(log_lines) - len(visible_lines))
-    if hidden_count:
-        visible_lines = [
-            f"... {hidden_count} baris sebelumnya disembunyikan dari live view ..."
-        ] + visible_lines
-    if not visible_lines:
-        visible_lines = ["Menunggu output dari script.py..."]
-
-    rendered_lines = []
-    for line in reversed(visible_lines):
-        escaped = html.escape(line) if line else "&nbsp;"
-        css_class = "terminal-line"
-        if not line:
-            css_class += " terminal-empty"
-        rendered_lines.append(f'<div class="{css_class}">{escaped}</div>')
-
-    placeholder.markdown(f"""
-    <div class="terminal-card">
-        <div class="terminal-header">
-            <span class="terminal-dot terminal-red"></span>
-            <span class="terminal-dot terminal-yellow"></span>
-            <span class="terminal-dot terminal-green"></span>
-            <span class="terminal-title">script.py live log</span>
-            <span class="terminal-status">{html.escape(status_label)} · {len(log_lines)} lines</span>
-        </div>
-        <div class="terminal-body">
-            {''.join(rendered_lines)}
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+st.markdown(get_css(), unsafe_allow_html=True)
 
 # ── Session state ──────────────────────────────────────────────
 defaults = {
-    "clips_data": None,       # parsed JSON dict
+    "clips_data": None,
     "selected_clip_index": 0,
     "parse_error": "",
-    "status": "idle",         # idle | ready | running | error
+    "status": "idle",          # idle | ready | running | error
+    "excluded_clips": set(),   # set of clip_id yang tidak akan dirender
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -276,7 +39,6 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
-    # Status badge
     status_map = {
         "idle":    ("badge-idle",    "Menunggu"),
         "ready":   ("badge-ready",   "Siap"),
@@ -300,19 +62,20 @@ with st.sidebar:
         st.caption(f"`input/{selected_video}`")
 
     st.markdown('<div class="section-label">Output</div>', unsafe_allow_html=True)
-    output_format = st.selectbox("Format output", ["mp4", "mkv", "mov"], label_visibility="collapsed")
+    st.selectbox("Format output", ["mp4", "mkv", "mov"], label_visibility="collapsed")
 
     save_dir = st.text_input("Folder output", value=OUTPUT_DIR, label_visibility="collapsed",
                               placeholder="Folder output...")
 
     st.markdown('<div class="section-label">Watermark</div>', unsafe_allow_html=True)
-    channel_name = st.text_input("Nama channel kamu", value="@channelku", label_visibility="collapsed",
-                                  placeholder="@namachannel")
-    source_credit = st.text_input("Source credit (e.g. youtube.com/@sumber)", value="", label_visibility="collapsed",
+    channel_name  = st.text_input("Nama channel kamu", value="@channelku", label_visibility="collapsed",
+                                   placeholder="@namachannel")
+    source_credit = st.text_input("Source credit (e.g. youtube.com/@sumber)", value="",
+                                   label_visibility="collapsed",
                                    placeholder="Source: youtube.com/@sumber")
 
     st.markdown("---")
-    always_rerun = st.checkbox("Always rerun (overwrite existing)", value=False)
+    st.checkbox("Always rerun (overwrite existing)", value=False)
 
 # ── Main area ──────────────────────────────────────────────────
 st.markdown("""
@@ -358,6 +121,7 @@ if parse_clicked:
                 st.session_state.parse_error = ""
                 st.session_state.status = "ready"
                 st.session_state.selected_clip_index = 0
+                st.session_state.excluded_clips = set()
         except json.JSONDecodeError as e:
             st.session_state.parse_error = str(e)
             st.session_state.status = "error"
@@ -370,12 +134,13 @@ if st.session_state.clips_data:
     data  = st.session_state.clips_data
     clips = data["clips"]
 
-    max_dur = max((c.get("duration_seconds", 0) for c in clips), default=1)
-    total_dur = sum(c.get("duration_seconds", 0) for c in clips)
+    max_dur       = max((c.get("duration_seconds", 0) for c in clips), default=1)
+    total_dur     = sum(c.get("duration_seconds", 0) for c in clips)
+    included_count = len([c for c in clips if c.get("clip_id") not in st.session_state.excluded_clips])
 
     st.markdown("---")
     m1, m2, m3 = st.columns(3)
-    m1.metric("Clips", len(clips))
+    m1.metric("Clips", f"{included_count}/{len(clips)} dipilih")
     m2.metric("Total durasi", f"{total_dur}s")
     m3.metric("Video", data.get("video_duration", "—"))
 
@@ -383,52 +148,57 @@ if st.session_state.clips_data:
 
     # ── Tab: Clips ─────────────────────────────────────────────
     with tab_clips:
-        viral_colors = {
-            range(9, 11): "#4ade80",
-            range(7, 9):  "#facc15",
-            range(0, 7):  "#f87171",
-        }
-        def viral_color(score):
-            for r, c in viral_colors.items():
-                if score in r:
-                    return c
-            return "#555"
-
         clip_rows = []
         for i, clip in enumerate(clips):
-            dur   = clip.get("duration_seconds", 0)
-            score = clip.get("viral_score", 0)
-            pct   = int(dur / max_dur * 100) if max_dur else 0
-            color = viral_color(score)
+            dur     = clip.get("duration_seconds", 0)
+            score   = clip.get("viral_score", 0)
+            clip_id = clip.get("clip_id", i + 1)
+            pct     = int(dur / max_dur * 100) if max_dur else 0
+            color   = viral_color(score)
 
-            st.markdown(f"""
-            <div class="clip-card">
-                <span class="clip-num">#{clip.get('clip_id', i+1)}</span>
-                <div style="flex:1;min-width:0">
-                    <div class="clip-caption">{clip.get('suggested_caption','—')}</div>
-                    <div style="margin-top:6px;display:flex;align-items:center;gap:8px">
-                        <div class="clip-bar-wrap">
-                            <div class="clip-bar-fill" style="width:{pct}%"></div>
+            col_cb, col_card = st.columns([0.04, 0.96])
+            with col_cb:
+                included = st.checkbox(
+                    "",
+                    value=clip_id not in st.session_state.excluded_clips,
+                    key=f"clip_include_{clip_id}",
+                    label_visibility="collapsed",
+                )
+                if included:
+                    st.session_state.excluded_clips.discard(clip_id)
+                else:
+                    st.session_state.excluded_clips.add(clip_id)
+
+            opacity = "1" if included else "0.35"
+            with col_card:
+                st.markdown(f"""
+                <div class="clip-card" style="opacity:{opacity}">
+                    <span class="clip-num">#{clip_id}</span>
+                    <div style="flex:1;min-width:0">
+                        <div class="clip-caption">{clip.get('suggested_caption','—')}</div>
+                        <div style="margin-top:6px;display:flex;align-items:center;gap:8px">
+                            <div class="clip-bar-wrap">
+                                <div class="clip-bar-fill" style="width:{pct}%"></div>
+                            </div>
+                            <span class="clip-meta">{clip.get('start_time','?')} → {clip.get('end_time','?')} &nbsp;·&nbsp; {dur}s</span>
                         </div>
-                        <span class="clip-meta">{clip.get('start_time','?')} → {clip.get('end_time','?')} &nbsp;·&nbsp; {dur}s</span>
+                    </div>
+                    <div style="text-align:right">
+                        <span class="clip-meta" style="color:{color}">
+                            <span class="viral-dot" style="background:{color}"></span>{score}/10
+                        </span>
+                        <div class="clip-meta" style="margin-top:2px">{clip.get('speaker','')}</div>
                     </div>
                 </div>
-                <div style="text-align:right">
-                    <span class="clip-meta" style="color:{color}">
-                        <span class="viral-dot" style="background:{color}"></span>{score}/10
-                    </span>
-                    <div class="clip-meta" style="margin-top:2px">{clip.get('speaker','')}</div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+                """, unsafe_allow_html=True)
 
             clip_rows.append({
-                "ID": clip.get("clip_id", i+1),
-                "Start": clip.get("start_time", ""),
-                "End": clip.get("end_time", ""),
-                "Dur(s)": dur,
+                "ID":      clip.get("clip_id", i + 1),
+                "Start":   clip.get("start_time", ""),
+                "End":     clip.get("end_time", ""),
+                "Dur(s)":  dur,
                 "Speaker": clip.get("speaker", ""),
-                "Viral": score,
+                "Viral":   score,
                 "Caption": clip.get("suggested_caption", ""),
             })
 
@@ -451,18 +221,6 @@ if st.session_state.clips_data:
             st.session_state.selected_clip_index = clip_labels.index(sel)
             clip = clips[st.session_state.selected_clip_index]
 
-            # Parse start_time ke detik untuk st.video start_time
-            def ts_to_seconds(ts: str) -> int:
-                parts = ts.strip().split(":")
-                try:
-                    if len(parts) == 3:
-                        return int(parts[0])*3600 + int(parts[1])*60 + int(parts[2])
-                    elif len(parts) == 2:
-                        return int(parts[0])*60 + int(parts[1])
-                    return int(parts[0])
-                except ValueError:
-                    return 0
-
             start_sec = ts_to_seconds(clip.get("start_time", "0"))
 
             col_v, col_i = st.columns([2, 1])
@@ -472,8 +230,7 @@ if st.session_state.clips_data:
                 st.markdown(f"**Hook**\n\n{clip.get('hook','—')}")
                 st.markdown(f"**Summary**\n\n{clip.get('summary','—')}")
                 st.markdown(f"**Category:** `{clip.get('category','—')}`")
-                score = clip.get('viral_score', 0)
-                st.markdown(f"**Viral Score:** {score}/10")
+                st.markdown(f"**Viral Score:** {clip.get('viral_score', 0)}/10")
 
             pc, nc = st.columns(2)
             if pc.button("◀ Prev") and st.session_state.selected_clip_index > 0:
@@ -487,7 +244,13 @@ if st.session_state.clips_data:
     st.markdown("---")
     st.markdown('<div class="section-label">Render</div>', unsafe_allow_html=True)
 
-    output_json = json.dumps(data, ensure_ascii=False, indent=2)
+    clips_to_render = [
+        c for c in data["clips"]
+        if c.get("clip_id") not in st.session_state.excluded_clips
+    ]
+    render_data = {**data, "clips": clips_to_render}
+    output_json = json.dumps(render_data, ensure_ascii=False, indent=2)
+
     dl_col, run_col = st.columns([1, 3])
     dl_col.download_button("⬇️ Download JSON", data=output_json,
                            file_name="clip.json", mime="application/json")
@@ -504,6 +267,7 @@ if st.session_state.clips_data:
             if missing:
                 st.toast(f"⚠️ Isi dulu: {', '.join(missing)}", icon="⚠️")
                 st.stop()
+
             st.session_state.status = "running"
             tmp_json = os.path.join(save_dir, "_autoclipper_input.json")
             with open(tmp_json, "w", encoding="utf-8") as f:
