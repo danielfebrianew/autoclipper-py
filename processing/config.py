@@ -37,6 +37,8 @@ LIP_CUT_COOLDOWN_2_SEC  = float(os.environ.get("AUTOCLIPPER_LIP_COOLDOWN_2",    
 LIP_CUT_COOLDOWN_3_SEC  = float(os.environ.get("AUTOCLIPPER_LIP_COOLDOWN_3",    "1.0"))
 LIP_CUT_BURST_WINDOW_SEC = float(os.environ.get("AUTOCLIPPER_LIP_BURST_WINDOW", "4.0"))
 
-LIP_MOTION_WEIGHT = float(os.environ.get("AUTOCLIPPER_LIP_MOTION_WEIGHT", "0.6"))
+LIP_MOTION_WEIGHT = float(os.environ.get("AUTOCLIPPER_LIP_MOTION_WEIGHT", "0.0"))
+
+MAX_FACES_PER_SAMPLE = int(os.environ.get("AUTOCLIPPER_MAX_FACES", "3"))
 LIP_SMOOTH_SEC    = float(os.environ.get("AUTOCLIPPER_LIP_SMOOTH_SEC",    "0.5"))
 LIP_MIN_MOTION    = float(os.environ.get("AUTOCLIPPER_LIP_MIN_MOTION",    "3.0"))

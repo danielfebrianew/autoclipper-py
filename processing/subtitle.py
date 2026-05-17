@@ -25,7 +25,7 @@ def format_timestamp_ass(seconds: float) -> str:
     return f"{hours}:{minutes:02d}:{secs:02d}.{cs:02d}"
 
 
-def write_ass(segments_list, ass_path: str) -> None:
+def write_ass(words: list, ass_path: str) -> None:
     def write_chunk(f, chunk):
         for i, active in enumerate(chunk):
             seg_start = active.start
@@ -45,9 +45,8 @@ def write_ass(segments_list, ass_path: str) -> None:
                 f"{format_timestamp_ass(seg_end)},Default,,0,0,0,,{text}\n"
             )
 
-    all_words = [w for seg in segments_list for w in seg.words]
     n = config.MAX_WORDS_PER_SCREEN
-    chunks = [all_words[i:i + n] for i in range(0, len(all_words), n)]
+    chunks = [words[i:i + n] for i in range(0, len(words), n)]
 
     with open(ass_path, "w", encoding="utf-8") as f:
         f.write(_ASS_HEADER)
