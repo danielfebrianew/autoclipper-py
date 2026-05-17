@@ -34,7 +34,7 @@ def write_ass(words: list, ass_path: str) -> None:
                 seg_end = seg_start + 0.01
             parts = []
             for j, w in enumerate(chunk):
-                word_text = w.word.strip().upper()
+                word_text = (w.word or "").strip().upper()
                 if j == i:
                     parts.append(f"{{\\c{_YELLOW}}}{word_text}{{\\c{_WHITE}}}")
                 else:
@@ -45,6 +45,7 @@ def write_ass(words: list, ass_path: str) -> None:
                 f"{format_timestamp_ass(seg_end)},Default,,0,0,0,,{text}\n"
             )
 
+    words = [w for w in words if (w.word or "").strip()]
     n = config.MAX_WORDS_PER_SCREEN
     chunks = [words[i:i + n] for i in range(0, len(words), n)]
 

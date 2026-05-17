@@ -95,7 +95,7 @@ def _apply_crop_smoothing(raw_targets, scene_cut_frames, crop_w, total_frames,
 
 
 def compute_crop_centers(face_data, scene_cut_frames, src_w, src_h, total_frames, src_fps):
-    """Legacy entry point used by tests or external callers. Streams internally."""
+    """Legacy entry point used by tests or external callers."""
     # face_data format: list of {"frame": int, "faces": [...]}
     crop_w = int(src_h * 9 / 16)
     half_crop = crop_w / 2
@@ -242,8 +242,11 @@ def compute_crop_centers(face_data, scene_cut_frames, src_w, src_h, total_frames
     return np.clip(centers, clamp_min, clamp_max), stats
 
 
-def compute_crop_centers_streaming(clip_path, face_model, src_w, src_h, total_frames, src_fps):
+def compute_crop_centers_streaming(clip_path, face_model, src_w, src_h, src_fps):
     """Single-pass: scene cuts + face sampling + keyframe building in one video decode."""
+    # CR4: clamp fps to ≥1 so frame counts are never 0 (B2 fix also applied here)
+    src_fps = max(src_fps, 1.0)
+
     crop_w = int(src_h * 9 / 16)
     half_crop = crop_w / 2
     default_cx = src_w / 2
@@ -253,7 +256,7 @@ def compute_crop_centers_streaming(clip_path, face_model, src_w, src_h, total_fr
     frame_interval = max(1, int(src_fps / config.FACE_SAMPLE_FPS))
     min_gap_frames = max(1, int(src_fps * config.SCENE_CUT_MIN_GAP_SEC))
 
-    min_lock_frames   = int(src_fps * config.FOCUS_MIN_LOCK_SEC)
+    min_lock_frames   = max(1, int(src_fps * config.FOCUS_MIN_LOCK_SEC))
     confirm_frames    = int(src_fps * config.FOCUS_SWITCH_CONFIRM_SEC)
     lost_grace_frames = int(src_fps * config.FOCUS_LOST_GRACE_SEC)
     match_distance_px = max(crop_w * config.FOCUS_MATCH_DISTANCE_RATIO, config.CROP_MIN_DEADZONE_PX)
@@ -282,9 +285,7 @@ def compute_crop_centers_streaming(clip_path, face_model, src_w, src_h, total_fr
         return float(np.clip(cx, clamp_min, clamp_max))
 
     def add_keyframe(fn, cx, hard=False):
-        if total_frames <= 0:
-            return
-        fn = max(0, min(int(fn), total_frames - 1))
+        fn = int(fn)
         keyframes.append((fn, clamp_cx(cx), hard))
         if hard:
             hard_cut_frame_set.add(fn)
@@ -310,38 +311,43 @@ def compute_crop_centers_streaming(clip_path, face_model, src_w, src_h, total_fr
             hist_diff  = float(cv2.compareHist(prev_hist, hist, cv2.HISTCMP_BHATTACHARYYA))
             score = 0.60 * hist_diff + 0.40 * pixel_diff
 
-            normal_cut     = score >= config.SCENE_CUT_SCORE_THRESHOLD and hist_diff >= config.SCENE_CUT_HIST_THRESHOLD and pixel_diff >= config.SCENE_CUT_PIXEL_THRESHOLD
-            strong_hist    = hist_diff >= max(0.45, config.SCENE_CUT_HIST_THRESHOLD * 2.5) and score >= config.SCENE_CUT_SCORE_THRESHOLD
-            strong_pixel   = pixel_diff >= max(0.22, config.SCENE_CUT_PIXEL_THRESHOLD * 2.0) and hist_diff >= config.SCENE_CUT_HIST_THRESHOLD * 0.75
+            normal_cut   = score >= config.SCENE_CUT_SCORE_THRESHOLD and hist_diff >= config.SCENE_CUT_HIST_THRESHOLD and pixel_diff >= config.SCENE_CUT_PIXEL_THRESHOLD
+            strong_hist  = hist_diff >= max(0.45, config.SCENE_CUT_HIST_THRESHOLD * 2.5) and score >= config.SCENE_CUT_SCORE_THRESHOLD
+            strong_pixel = pixel_diff >= max(0.22, config.SCENE_CUT_PIXEL_THRESHOLD * 2.0) and hist_diff >= config.SCENE_CUT_HIST_THRESHOLD * 0.75
 
             if (normal_cut or strong_hist or strong_pixel) and frame_idx - last_cut_frame >= min_gap_frames:
                 scene_cut_frames.append(frame_idx)
                 last_cut_frame = frame_idx
                 is_scene_cut = True
 
+        # CR2: update prev_gray/prev_hist AFTER scene cut detection, before any continue,
+        # so the next frame always compares against the most recent frame (not one before the cut).
         prev_gray = gray
         prev_hist = hist
+
+        # CR3: reset pending focus state on ANY scene cut, not just sampling frames.
+        if is_scene_cut:
+            pending_cx = None
+            pending_since_frame = None
+            lock_until_frame = -1
 
         # --- face sampling (every frame_interval frames) ---
         if frame_idx % frame_interval == 0:
             faces = sample_face_frame(frame, face_model)
             best_face = pick_best_face(faces)
 
-            # handle scene cut reset
+            # handle scene cut reset at a sampling frame
             if is_scene_cut and frame_idx > prev_sample_frame:
                 source_cut_resets += 1
-                pending_cx = None
-                pending_since_frame = None
+                # pending_cx/lock already reset above (CR3)
                 current_cx = best_face["cx"] if best_face is not None else default_cx
                 current_area = best_face["area"] if best_face is not None else 0.0
                 last_seen_frame = frame_idx if best_face is not None else -(10**9)
                 lock_until_frame = frame_idx + min_lock_frames
                 add_keyframe(frame_idx, current_cx)
                 prev_sample_frame = frame_idx
-                frame_idx += 1
-                continue
-
-            if current_cx is None:
+                # C3: NO frame_idx += 1 here; the single increment is at the bottom of the loop.
+            elif current_cx is None:
                 current_cx = best_face["cx"] if best_face is not None else default_cx
                 current_area = best_face["area"] if best_face is not None else 0.0
                 if best_face is not None:
@@ -349,75 +355,87 @@ def compute_crop_centers_streaming(clip_path, face_model, src_w, src_h, total_fr
                 lock_until_frame = frame_idx + min_lock_frames
                 add_keyframe(frame_idx, current_cx)
                 prev_sample_frame = frame_idx
-                frame_idx += 1
-                continue
+                # C3: NO frame_idx += 1 here.
+            else:
+                current_face = match_face_by_center(faces, current_cx, match_distance_px)
+                current_visible = current_face is not None
+                current_lost_too_long = frame_idx - last_seen_frame > lost_grace_frames
 
-            current_face = match_face_by_center(faces, current_cx, match_distance_px)
-            current_visible = current_face is not None
-            current_lost_too_long = frame_idx - last_seen_frame > lost_grace_frames
+                if current_visible:
+                    current_cx = current_face["cx"]
+                    current_area = current_face["area"]
+                    last_seen_frame = frame_idx
+                    current_lost_too_long = False
+                elif not faces and current_lost_too_long:
+                    current_cx = default_cx
+                    current_area = 0.0
+                    pending_cx = None
+                    pending_since_frame = None
 
-            if current_visible:
-                current_cx = current_face["cx"]
-                current_area = current_face["area"]
-                last_seen_frame = frame_idx
-                current_lost_too_long = False
-            elif not faces and current_lost_too_long:
-                current_cx = default_cx
-                current_area = 0.0
-                pending_cx = None
-                pending_since_frame = None
+                candidate = None
+                other_faces = [f for f in faces if abs(f["cx"] - current_cx) > match_distance_px]
+                if other_faces:
+                    candidate = pick_best_face(other_faces)
+                elif best_face is not None and abs(best_face["cx"] - current_cx) > match_distance_px:
+                    candidate = best_face
 
-            candidate = None
-            other_faces = [f for f in faces if abs(f["cx"] - current_cx) > match_distance_px]
-            if other_faces:
-                candidate = pick_best_face(other_faces)
-            elif best_face is not None and abs(best_face["cx"] - current_cx) > match_distance_px:
-                candidate = best_face
+                can_switch = frame_idx >= lock_until_frame
+                if candidate is not None and can_switch:
+                    size_wins = current_area <= 0 or candidate["area"] >= current_area * config.FOCUS_SWITCH_AREA_RATIO
+                    candidate_is_better = current_lost_too_long or size_wins
 
-            can_switch = frame_idx >= lock_until_frame
-            if candidate is not None and can_switch:
-                size_wins = current_area <= 0 or candidate["area"] >= current_area * config.FOCUS_SWITCH_AREA_RATIO
-                candidate_is_better = current_lost_too_long or size_wins
+                    if candidate_is_better:
+                        if pending_cx is None or abs(candidate["cx"] - pending_cx) > match_distance_px:
+                            # B1: new candidate position — reset timer so it counts from THIS frame.
+                            pending_cx = candidate["cx"]
+                            pending_since_frame = frame_idx
+                        else:
+                            # Same candidate, just update position; keep original pending_since_frame.
+                            pending_cx = candidate["cx"]
 
-                if candidate_is_better:
-                    if pending_cx is None or abs(candidate["cx"] - pending_cx) > match_distance_px:
-                        pending_cx = candidate["cx"]
-                        pending_since_frame = frame_idx
-                    else:
-                        pending_cx = candidate["cx"]
-
-                    if pending_since_frame is None:
-                        pending_since_frame = frame_idx
-                    pending_age = frame_idx - pending_since_frame
-                    if pending_age >= confirm_frames:
-                        if abs(candidate["cx"] - current_cx) > match_distance_px * 0.5:
-                            smooth_focus_changes += 1
-                        current_cx = candidate["cx"]
-                        current_area = candidate["area"]
-                        last_seen_frame = frame_idx
-                        lock_until_frame = frame_idx + min_lock_frames
+                        if pending_since_frame is None:
+                            pending_since_frame = frame_idx
+                        pending_age = frame_idx - pending_since_frame
+                        if pending_age >= confirm_frames:
+                            if abs(candidate["cx"] - current_cx) > match_distance_px * 0.5:
+                                smooth_focus_changes += 1
+                            current_cx = candidate["cx"]
+                            current_area = candidate["area"]
+                            last_seen_frame = frame_idx
+                            # M4: clamp lock so it doesn't run past end of video.
+                            lock_until_frame = frame_idx + min_lock_frames
+                            pending_cx = None
+                            pending_since_frame = None
+                    elif current_visible:
                         pending_cx = None
                         pending_since_frame = None
                 elif current_visible:
                     pending_cx = None
                     pending_since_frame = None
-            elif current_visible:
-                pending_cx = None
-                pending_since_frame = None
 
-            add_keyframe(frame_idx, current_cx)
-            prev_sample_frame = frame_idx
+                add_keyframe(frame_idx, current_cx)
+                prev_sample_frame = frame_idx
 
+        # C3: single increment — always at the bottom, never inside the sampling block.
         frame_idx += 1
 
     cap.release()
 
+    # CR4: use actual frame_idx (frames read from cap) as the true total, not CAP_PROP_FRAME_COUNT.
+    actual_frames = frame_idx
+
     if not keyframes:
         add_keyframe(0, default_cx)
 
-    raw_targets, hcf = _interpolate_targets_by_scene(keyframes, scene_cut_frames, total_frames, default_cx)
+    # Clamp all keyframe indices to actual range now that we know it.
+    clamped_keyframes = [
+        (max(0, min(fn, actual_frames - 1)), cx, hard)
+        for fn, cx, hard in keyframes
+    ]
+
+    raw_targets, hcf = _interpolate_targets_by_scene(clamped_keyframes, scene_cut_frames, actual_frames, default_cx)
     hcf |= hard_cut_frame_set
-    centers, smooth_stats = _apply_crop_smoothing(raw_targets, scene_cut_frames, crop_w, total_frames, src_fps, hard_cut_frames=hcf)
+    centers, smooth_stats = _apply_crop_smoothing(raw_targets, scene_cut_frames, crop_w, actual_frames, src_fps, hard_cut_frames=hcf)
 
     stats = {
         "scene_cuts": len(scene_cut_frames),

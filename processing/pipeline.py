@@ -27,43 +27,44 @@ def process_clip(clip: dict, whisper_model, face_model) -> None:
     temp_audio   = os.path.join(config.out_dir, f"_temp_audio_{clip_id}.wav")
     temp_ass     = os.path.join(config.out_dir, f"_temp_{clip_id}.ass")
 
-    print(f"[{clip_id}] ✂️  Memotong clip...")
-    cut_clip(start, duration, config.video_file, temp_clip)
+    try:
+        print(f"[{clip_id}] ✂️  Memotong clip...")
+        cut_clip(start, duration, config.video_file, temp_clip)
 
-    print(f"[{clip_id}] 🎧 Transkripsi audio (medium)...")
-    extract_audio(temp_clip, temp_audio)
-    segments, _ = whisper_model.transcribe(temp_audio, language="id", word_timestamps=True)
-    words = [w for seg in segments for w in seg.words]
+        print(f"[{clip_id}] 🎧 Transkripsi audio (medium)...")
+        extract_audio(temp_clip, temp_audio)
+        segments, _ = whisper_model.transcribe(temp_audio, language="id", word_timestamps=True)
+        words = [w for seg in segments if seg.words for w in seg.words]
 
-    print(f"[{clip_id}] 📝 Membuat subtitle ASS...")
-    write_ass(words, temp_ass)
-    del words
+        print(f"[{clip_id}] 📝 Membuat subtitle ASS...")
+        write_ass(words, temp_ass)
+        del words
 
-    print(f"[{clip_id}] 🎯 Face detection + scene cuts + crop path (single pass)...")
-    cap = cv2.VideoCapture(temp_clip)
-    src_w        = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    src_h        = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    fps          = cap.get(cv2.CAP_PROP_FPS)
-    cap.release()
+        print(f"[{clip_id}] 🎯 Face detection + scene cuts + crop path (single pass)...")
+        cap = cv2.VideoCapture(temp_clip)
+        src_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        src_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        raw_fps = cap.get(cv2.CAP_PROP_FPS)
+        fps = raw_fps if raw_fps and raw_fps > 0 else 30.0  # B2: guard fps=0
+        cap.release()
 
-    centers, crop_stats = compute_crop_centers_streaming(
-        temp_clip, face_model, src_w, src_h, total_frames, fps,
-    )
-    print(f"[{clip_id}]    Scene cuts: {crop_stats['scene_cuts']}")
-    print(f"[{clip_id}]    Hard crop jumps: {crop_stats['hard_crop_jumps']}")
-    print(f"[{clip_id}]    Smooth focus changes: {crop_stats['smooth_focus_changes']}")
-    print(f"[{clip_id}]    Source cut resets: {crop_stats['source_cut_resets']}")
+        centers, crop_stats = compute_crop_centers_streaming(
+            temp_clip, face_model, src_w, src_h, fps,
+        )
+        print(f"[{clip_id}]    Scene cuts: {crop_stats['scene_cuts']}")
+        print(f"[{clip_id}]    Hard crop jumps: {crop_stats['hard_crop_jumps']}")
+        print(f"[{clip_id}]    Smooth focus changes: {crop_stats['smooth_focus_changes']}")
+        print(f"[{clip_id}]    Source cut resets: {crop_stats['source_cut_resets']}")
 
-    print(f"[{clip_id}] 🎞️  Rendering final video...")
-    composite(temp_clip, centers, src_w, src_h, temp_ass, output_video)
-    del centers
+        print(f"[{clip_id}] 🎞️  Rendering final video...")
+        composite(temp_clip, centers, src_w, src_h, temp_ass, output_video)
+        del centers
+    finally:
+        for path in [temp_clip, temp_audio, temp_ass]:
+            if os.path.exists(path):
+                os.remove(path)
+        gc.collect()
 
-    for path in [temp_clip, temp_audio, temp_ass]:
-        if os.path.exists(path):
-            os.remove(path)
-
-    gc.collect()
     print(f"[{clip_id}] ✅ Selesai! → {output_video}")
 
 

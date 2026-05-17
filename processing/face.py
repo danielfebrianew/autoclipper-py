@@ -30,12 +30,8 @@ def sample_face_frame(frame, face_model) -> list:
     return faces
 
 
-def _face_score(face, speaking_score: float = 0.0) -> float:
-    size_score = face["area"] * (0.75 + face.get("conf", 1.0))
-    if config.LIP_MOTION_WEIGHT <= 0.0 or speaking_score < config.LIP_MIN_MOTION:
-        return size_score
-    lip_norm = min(speaking_score / 20.0, 1.0)
-    return (1.0 - config.LIP_MOTION_WEIGHT) * size_score + config.LIP_MOTION_WEIGHT * size_score * (1.0 + lip_norm * 3.0)
+def _face_score(face) -> float:
+    return face["area"] * (0.75 + face.get("conf", 1.0))
 
 
 def pick_best_face(faces):
