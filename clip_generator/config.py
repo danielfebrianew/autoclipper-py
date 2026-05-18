@@ -1,0 +1,20 @@
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+KIE_AI_API_KEY = os.getenv("KIE_AI_API_KEY", "")
+KIE_ENDPOINT = "https://api.kie.ai/gemini-3-flash/v1/chat/completions"
+
+DEFAULT_MAX_CLIPS = 10
+DEFAULT_MIN_DURATION = 20
+DEFAULT_MAX_DURATION = 90
+DEFAULT_BUFFER = 5
+DEFAULT_LANGUAGE = "id"
+
+HEATMAP_PEAK_THRESHOLD = 0.5
+HEATMAP_HIGH_THRESHOLD = 0.7
+
+MAX_RETRIES = 3
+RETRY_DELAY = 5
+MAX_TRANSCRIPT_WORDS = 15000

@@ -7,10 +7,13 @@ import uuid
 from dataclasses import dataclass, field
 from typing import AsyncGenerator
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
+
+load_dotenv()
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(APP_DIR, "output")
@@ -165,3 +168,31 @@ async def stream_job(job_id: str):
             await asyncio.sleep(0.3)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+class GenerateClipsRequest(BaseModel):
+    youtube_url: str
+    max_clips: int = 10
+    min_duration: int = 20
+    max_duration: int = 90
+    language: str = "id"
+
+
+@app.post("/api/generate-clips")
+async def generate_clips(req: GenerateClipsRequest):
+    from clip_generator import generate as run_pipeline
+
+    try:
+        clips_json = await run_pipeline(
+            youtube_url=req.youtube_url,
+            max_clips=req.max_clips,
+            min_duration=req.min_duration,
+            max_duration=req.max_duration,
+            language=req.language,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    return {"clips_json": clips_json}
