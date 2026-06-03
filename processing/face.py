@@ -30,14 +30,32 @@ def sample_face_frame(frame, face_model) -> list:
     return faces
 
 
-def _face_score(face) -> float:
-    return face["area"] * (0.75 + face.get("conf", 1.0))
+def _face_score(face, asd_score: float = 0.0) -> float:
+    base = face["area"] * (0.75 + face.get("conf", 1.0))
+    # ASD speaking boost: up to 3× base score when model is confident (score=1.0)
+    return base * (1.0 + 2.0 * asd_score)
 
 
-def pick_best_face(faces):
+def pick_best_face(faces, asd_scores: dict | None = None):
+    """
+    asd_scores: optional dict mapping face cx (rounded int) → speaking probability.
+    When provided, faces with high speaking score are strongly preferred.
+    """
     if not faces:
         return None
-    return max(faces, key=_face_score)
+    if not asd_scores:
+        return max(faces, key=_face_score)
+
+    def scored(face):
+        key = round(face["cx"])
+        # find nearest cx key within 50px
+        best_asd = 0.0
+        for cx_key, prob in asd_scores.items():
+            if abs(cx_key - key) < 50:
+                best_asd = max(best_asd, prob)
+        return _face_score(face, best_asd)
+
+    return max(faces, key=scored)
 
 
 def match_face_by_center(faces, current_cx, max_distance_px):

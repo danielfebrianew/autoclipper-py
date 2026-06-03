@@ -58,6 +58,14 @@ def list_inputs():
     return {"files": files}
 
 
+@app.get("/api/inputs/{filename}")
+def serve_input(filename: str):
+    path = os.path.join(INPUT_DIR, filename)
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(path, media_type="video/mp4")
+
+
 @app.get("/api/outputs")
 def list_outputs():
     files = sorted([

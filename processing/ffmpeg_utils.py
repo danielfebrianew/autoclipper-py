@@ -2,6 +2,9 @@ import subprocess
 import cv2
 import numpy as np
 from . import config
+from .logger import get_logger
+
+log = get_logger("processing.ffmpeg")
 
 
 def cut_clip(start, duration, src_video: str, dest: str) -> None:
@@ -11,7 +14,7 @@ def cut_clip(start, duration, src_video: str, dest: str) -> None:
     ], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     if result.returncode != 0:
         err = result.stderr.decode("utf-8", errors="replace")[-1000:]
-        print(f"[ffmpeg stderr]\n{err}", flush=True)
+        log.error("ffmpeg cut_clip gagal (rc=%d):\n%s", result.returncode, err)
         raise subprocess.CalledProcessError(result.returncode, "ffmpeg", stderr=err)
 
 
@@ -97,6 +100,7 @@ def composite(temp_clip: str, centers: np.ndarray, src_w: int, src_h: int,
     _, stderr = proc.communicate()
     if proc.returncode != 0:
         err_tail = (stderr or b"").decode("utf-8", errors="replace")[-1500:]
+        log.error("ffmpeg composite gagal (rc=%d):\n%s", proc.returncode, err_tail)
         raise subprocess.CalledProcessError(
             proc.returncode, proc.args, output=None, stderr=err_tail,
         )

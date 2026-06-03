@@ -34,3 +34,5 @@ tokenizers==0.22.2
 tqdm==4.67.3
 typer==0.24.2
 typing_extensions==4.15.0
+python-speech-features==0.6
+scipy>=1.11.0

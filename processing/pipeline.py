@@ -10,9 +10,34 @@ from . import config
 from .ffmpeg_utils import cut_clip, extract_audio, composite
 from .subtitle import write_ass
 from .reframe import compute_crop_centers_streaming
+from .asd import load_asd_model, compute_asd_scores
+from .face import sample_face_frame
+from .logger import get_logger
+
+log = get_logger("processing.pipeline")
 
 
-def process_clip(clip: dict, whisper_model, face_model) -> None:
+def _build_face_tracks(clip_path: str, face_model, src_fps: float) -> list[dict]:
+    """Single-pass to collect face detections with boxes for ASD input."""
+    from . import config as cfg
+    cap = cv2.VideoCapture(clip_path)
+    frame_interval = max(1, int(src_fps / cfg.FACE_SAMPLE_FPS))
+    tracks = []
+    frame_idx = 0
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        if frame_idx % frame_interval == 0:
+            faces = sample_face_frame(frame, face_model)
+            for face in faces:
+                tracks.append({"frame": frame_idx, "box": face["box"], "cx": face["cx"]})
+        frame_idx += 1
+    cap.release()
+    return tracks
+
+
+def process_clip(clip: dict, whisper_model, face_model, asd_model=None, asd_device=None) -> None:
     clip_id     = clip["clip_id"]
     start       = clip["start_time"]
     duration    = str(clip["duration_seconds"])
@@ -28,59 +53,94 @@ def process_clip(clip: dict, whisper_model, face_model) -> None:
     temp_ass     = os.path.join(config.out_dir, f"_temp_{clip_id}.ass")
 
     try:
-        print(f"[{clip_id}] ✂️  Memotong clip...")
+        log.info("[%s] ✂️  Memotong clip...", clip_id)
         cut_clip(start, duration, config.video_file, temp_clip)
 
-        print(f"[{clip_id}] 🎧 Transkripsi audio (medium)...")
+        log.info("[%s] 🎧 Transkripsi audio (medium)...", clip_id)
         extract_audio(temp_clip, temp_audio)
         segments, _ = whisper_model.transcribe(temp_audio, language="id", word_timestamps=True)
         words = [w for seg in segments if seg.words for w in seg.words]
+        log.debug("[%s] Transkripsi selesai: %d kata", clip_id, len(words))
 
-        print(f"[{clip_id}] 📝 Membuat subtitle ASS...")
+        log.info("[%s] 📝 Membuat subtitle ASS...", clip_id)
         write_ass(words, temp_ass)
         del words
 
-        print(f"[{clip_id}] 🎯 Face detection + scene cuts + crop path (single pass)...")
+        log.info("[%s] 🎯 Face detection + scene cuts + crop path (single pass)...", clip_id)
         cap = cv2.VideoCapture(temp_clip)
         src_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         src_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         raw_fps = cap.get(cv2.CAP_PROP_FPS)
-        fps = raw_fps if raw_fps and raw_fps > 0 else 30.0  # B2: guard fps=0
+        fps = raw_fps if raw_fps and raw_fps > 0 else 30.0
         cap.release()
 
-        centers, crop_stats = compute_crop_centers_streaming(
-            temp_clip, face_model, src_w, src_h, fps,
-        )
-        print(f"[{clip_id}]    Scene cuts: {crop_stats['scene_cuts']}")
-        print(f"[{clip_id}]    Hard crop jumps: {crop_stats['hard_crop_jumps']}")
-        print(f"[{clip_id}]    Smooth focus changes: {crop_stats['smooth_focus_changes']}")
-        print(f"[{clip_id}]    Source cut resets: {crop_stats['source_cut_resets']}")
+        asd_scores = None
+        if asd_model is not None:
+            log.info("[%s] 🗣️  Active speaker detection (Light-ASD)...", clip_id)
+            try:
+                face_tracks = _build_face_tracks(temp_clip, face_model, fps)
+                log.debug("[%s] ASD: %d face track samples dikumpulkan", clip_id, len(face_tracks))
+                raw_scores = compute_asd_scores(
+                    temp_clip, temp_audio, face_tracks, asd_model, asd_device, fps
+                )
+                asd_scores = {}
+                for track in face_tracks:
+                    fn = track["frame"]
+                    score = raw_scores.get(fn, 0.0)
+                    asd_scores.setdefault(fn, {})[round(track["cx"])] = score
+                log.debug("[%s] ASD selesai: %d frame di-score", clip_id, len(asd_scores))
+            except Exception:
+                log.exception("[%s] ASD gagal, melanjutkan tanpa speaker detection", clip_id)
+                asd_scores = None
 
-        print(f"[{clip_id}] 🎞️  Rendering final video...")
+        centers, crop_stats = compute_crop_centers_streaming(
+            temp_clip, face_model, src_w, src_h, fps, asd_scores=asd_scores,
+        )
+        log.info(
+            "[%s] Crop stats — scene cuts: %d | hard jumps: %d | focus changes: %d | cut resets: %d",
+            clip_id,
+            crop_stats["scene_cuts"],
+            crop_stats["hard_crop_jumps"],
+            crop_stats["smooth_focus_changes"],
+            crop_stats["source_cut_resets"],
+        )
+
+        log.info("[%s] 🎞️  Rendering final video...", clip_id)
         composite(temp_clip, centers, src_w, src_h, temp_ass, output_video)
         del centers
+
+    except Exception:
+        log.exception("[%s] Pipeline gagal", clip_id)
+        raise
     finally:
         for path in [temp_clip, temp_audio, temp_ass]:
             if os.path.exists(path):
                 os.remove(path)
         gc.collect()
 
-    print(f"[{clip_id}] ✅ Selesai! → {output_video}")
+    log.info("[%s] ✅ Selesai! → %s", clip_id, output_video)
 
 
 def run() -> None:
-    print("Memuat model Faster-Whisper (medium) di CPU...")
+    log.info("Memuat model Faster-Whisper (medium) di CPU...")
     whisper_model = WhisperModel("medium", device="cpu", compute_type="int8")
 
-    print("Memuat model YOLOv8 face detection...")
+    log.info("Memuat model YOLOv8 face detection...")
     face_model = YOLO(os.path.join(config.APP_DIR, "yolov8n-face-lindevs.pt"))
+
+    log.info("Memuat model Light-ASD (active speaker detection)...")
+    try:
+        asd_model, asd_device = load_asd_model()
+    except Exception:
+        log.exception("Gagal memuat Light-ASD, ASD dinonaktifkan")
+        asd_model, asd_device = None, None
 
     with open(config.json_file, "r", encoding="utf-8") as f:
         data = json.load(f)
 
-    print(f"\nDitemukan {len(data['clips'])} clip. Memulai pipeline...\n")
+    log.info("Ditemukan %d clip. Memulai pipeline...", len(data["clips"]))
 
     for clip in data["clips"]:
-        process_clip(clip, whisper_model, face_model)
+        process_clip(clip, whisper_model, face_model, asd_model, asd_device)
 
-    print("\n🎉 Semua pipeline selesai dijalankan!")
+    log.info("🎉 Semua pipeline selesai dijalankan!")

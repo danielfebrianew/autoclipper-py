@@ -94,9 +94,11 @@ def _apply_crop_smoothing(raw_targets, scene_cut_frames, crop_w, total_frames,
     return centers, {"hard_crop_jumps": hard_crop_jumps}
 
 
-def compute_crop_centers(face_data, scene_cut_frames, src_w, src_h, total_frames, src_fps):
+def compute_crop_centers(face_data, scene_cut_frames, src_w, src_h, total_frames, src_fps,
+                         asd_scores: dict | None = None):
     """Legacy entry point used by tests or external callers."""
     # face_data format: list of {"frame": int, "faces": [...]}
+    # asd_scores: optional dict of frame_num → {cx_key → speaking_prob} from Light-ASD
     crop_w = int(src_h * 9 / 16)
     half_crop = crop_w / 2
     default_cx = src_w / 2
@@ -139,7 +141,8 @@ def compute_crop_centers(face_data, scene_cut_frames, src_w, src_h, total_frames
     for sample_idx, sample in enumerate(face_data):
         frame_num = int(sample["frame"])
         faces = sample["faces"]
-        best_face = pick_best_face(faces)
+        frame_asd = asd_scores.get(frame_num) if asd_scores else None
+        best_face = pick_best_face(faces, frame_asd)
 
         source_cut_reset = False
         while cut_idx < len(scene_cuts) and scene_cuts[cut_idx] <= frame_num:
@@ -187,7 +190,7 @@ def compute_crop_centers(face_data, scene_cut_frames, src_w, src_h, total_frames
         candidate = None
         other_faces = [f for f in faces if abs(f["cx"] - current_cx) > match_distance_px]
         if other_faces:
-            candidate = pick_best_face(other_faces)
+            candidate = pick_best_face(other_faces, frame_asd)
         elif best_face is not None and abs(best_face["cx"] - current_cx) > match_distance_px:
             candidate = best_face
 
@@ -242,7 +245,8 @@ def compute_crop_centers(face_data, scene_cut_frames, src_w, src_h, total_frames
     return np.clip(centers, clamp_min, clamp_max), stats
 
 
-def compute_crop_centers_streaming(clip_path, face_model, src_w, src_h, src_fps):
+def compute_crop_centers_streaming(clip_path, face_model, src_w, src_h, src_fps,
+                                   asd_scores: dict | None = None):
     """Single-pass: scene cuts + face sampling + keyframe building in one video decode."""
     # CR4: clamp fps to ≥1 so frame counts are never 0 (B2 fix also applied here)
     src_fps = max(src_fps, 1.0)
@@ -334,7 +338,8 @@ def compute_crop_centers_streaming(clip_path, face_model, src_w, src_h, src_fps)
         # --- face sampling (every frame_interval frames) ---
         if frame_idx % frame_interval == 0:
             faces = sample_face_frame(frame, face_model)
-            best_face = pick_best_face(faces)
+            frame_asd = asd_scores.get(frame_idx) if asd_scores else None
+            best_face = pick_best_face(faces, frame_asd)
 
             # handle scene cut reset at a sampling frame
             if is_scene_cut and frame_idx > prev_sample_frame:
@@ -375,7 +380,7 @@ def compute_crop_centers_streaming(clip_path, face_model, src_w, src_h, src_fps)
                 candidate = None
                 other_faces = [f for f in faces if abs(f["cx"] - current_cx) > match_distance_px]
                 if other_faces:
-                    candidate = pick_best_face(other_faces)
+                    candidate = pick_best_face(other_faces, frame_asd)
                 elif best_face is not None and abs(best_face["cx"] - current_cx) > match_distance_px:
                     candidate = best_face
 
