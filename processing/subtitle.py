@@ -25,7 +25,13 @@ def format_timestamp_ass(seconds: float) -> str:
     return f"{hours}:{minutes:02d}:{secs:02d}.{cs:02d}"
 
 
-def write_ass(words: list, ass_path: str) -> None:
+def write_ass(words: list, ass_path: str, bottom_margin_px: int = 0) -> None:
+    """
+    bottom_margin_px: extra bottom margin in pixels pushed up from the frame bottom.
+    Used in split-screen mode to keep subtitles inside the top 60% area.
+    ASS MarginV is distance from bottom of PlayResY, so we add bottom_margin_px
+    to the default 450px margin.
+    """
     def write_chunk(f, chunk):
         for i, active in enumerate(chunk):
             seg_start = active.start
@@ -49,7 +55,12 @@ def write_ass(words: list, ass_path: str) -> None:
     n = config.MAX_WORDS_PER_SCREEN
     chunks = [words[i:i + n] for i in range(0, len(words), n)]
 
+    margin_v = 450 + bottom_margin_px
+    header = _ASS_HEADER.replace("MarginV,", "MarginV,").replace(
+        ",450,1", f",{margin_v},1"
+    )
+
     with open(ass_path, "w", encoding="utf-8") as f:
-        f.write(_ASS_HEADER)
+        f.write(header)
         for chunk in chunks:
             write_chunk(f, chunk)

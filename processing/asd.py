@@ -249,8 +249,8 @@ def compute_asd_scores(
                 mfcc_feat, ((0, A - mfcc_feat.shape[0]), (0, 0))
             )
 
-            v_tensor = torch.from_numpy(visual).unsqueeze(0).to(device)       # (1, T, 112, 112)
-            a_tensor = torch.from_numpy(mfcc_trimmed).unsqueeze(0).to(device) # (1, A, 13)
+            v_tensor = torch.from_numpy(visual.astype(np.float32)).unsqueeze(0).to(device)
+            a_tensor = torch.from_numpy(mfcc_trimmed.astype(np.float32)).unsqueeze(0).to(device)
 
             with torch.no_grad():
                 logits = model(v_tensor, a_tensor)          # (1, T, 2)

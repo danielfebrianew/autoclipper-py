@@ -33,3 +33,5 @@ CROP_SMOOTHING_TAU_SEC     = float(os.environ.get("AUTOCLIPPER_CROP_SMOOTHING_TA
 CROP_MAX_SPEED_PX_PER_SEC  = float(os.environ.get("AUTOCLIPPER_CROP_MAX_SPEED",        "480"))
 
 MAX_FACES_PER_SAMPLE = int(os.environ.get("AUTOCLIPPER_MAX_FACES", "3"))
+
+SPLIT_SCREEN_TOP_RATIO = float(os.environ.get("AUTOCLIPPER_SPLIT_TOP_RATIO", "0.6"))

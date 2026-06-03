@@ -47,6 +47,7 @@ class RenderRequest(BaseModel):
     clips_json: dict
     channel_name: str
     source_credit: str
+    mode: str = "single"  # "single" | "split"
 
 
 @app.get("/api/inputs")
@@ -103,6 +104,7 @@ def start_render(req: RenderRequest):
     env["AUTOCLIPPER_OUTDIR"] = OUTPUT_DIR
     env["AUTOCLIPPER_CHANNEL"] = req.channel_name
     env["AUTOCLIPPER_SOURCE_CREDIT"] = req.source_credit
+    env["AUTOCLIPPER_MODE"] = req.mode
     env["PYTHONUNBUFFERED"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
 

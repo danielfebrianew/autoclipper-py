@@ -74,6 +74,16 @@ with st.sidebar:
                                    label_visibility="collapsed",
                                    placeholder="Source: youtube.com/@sumber")
 
+    st.markdown('<div class="section-label">Mode Render</div>', unsafe_allow_html=True)
+    render_mode = st.radio(
+        "render_mode",
+        options=["single", "split"],
+        format_func=lambda x: "🎯 Single Speaker" if x == "single" else "🪟 Split Screen (2 speaker)",
+        label_visibility="collapsed",
+    )
+    if render_mode == "split":
+        st.caption("60% atas: dua speaker side-by-side · 40% bawah: blank untuk overlay")
+
     st.markdown("---")
     st.checkbox("Always rerun (overwrite existing)", value=False)
 
@@ -279,6 +289,7 @@ if st.session_state.clips_data:
             env["AUTOCLIPPER_OUTDIR"]        = save_dir
             env["AUTOCLIPPER_CHANNEL"]       = channel_name
             env["AUTOCLIPPER_SOURCE_CREDIT"] = source_credit
+            env["AUTOCLIPPER_MODE"]          = render_mode
             env["PYTHONUNBUFFERED"]          = "1"
             env["PYTHONIOENCODING"]          = "utf-8"
 

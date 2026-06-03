@@ -450,3 +450,130 @@ def compute_crop_centers_streaming(clip_path, face_model, src_w, src_h, src_fps,
         **smooth_stats,
     }
     return np.clip(centers, clamp_min, clamp_max), stats
+
+
+def compute_dual_crop_centers_streaming(clip_path, face_model, src_w, src_h, src_fps,
+                                        asd_scores: dict | None = None):
+    """
+    Split-screen variant: track two faces simultaneously (left slot and right slot).
+
+    Faces are assigned to slots by their horizontal position relative to src_w/2.
+    Each slot is independently smoothed. If only one face is visible, both slots
+    mirror it so the frame is always filled.
+
+    Returns (centers_left, centers_right, stats) where each centers_* is a 1-D
+    numpy array of length == actual_frames, containing the crop-center x-coordinate
+    within the source frame for that panel.
+    """
+    src_fps = max(src_fps, 1.0)
+
+    panel_w = int(src_h * 9 / 16) // 2   # half of the 9:16 crop width
+    half_p  = panel_w / 2
+
+    # Clamp bounds so panel never goes outside source frame
+    clamp_left_min  = half_p
+    clamp_left_max  = src_w / 2
+    clamp_right_min = src_w / 2
+    clamp_right_max = src_w - half_p
+
+    default_left  = src_w * 0.25
+    default_right = src_w * 0.75
+
+    frame_interval = max(1, int(src_fps / config.FACE_SAMPLE_FPS))
+    deadzone_px    = max(panel_w * config.CROP_DEADZONE_RATIO, config.CROP_MIN_DEADZONE_PX)
+    max_step_px    = max(1.0, config.CROP_MAX_SPEED_PX_PER_SEC / src_fps)
+    alpha          = 1.0 - np.exp(-1.0 / max(src_fps * config.CROP_SMOOTHING_TAU_SEC, 1.0))
+
+    cx_left  = default_left
+    cx_right = default_right
+
+    raw_left:  list[tuple[int, float]] = []
+    raw_right: list[tuple[int, float]] = []
+
+    cap = cv2.VideoCapture(clip_path)
+    frame_idx = 0
+
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        if frame_idx % frame_interval == 0:
+            faces = sample_face_frame(frame, face_model)
+            frame_asd = asd_scores.get(frame_idx) if asd_scores else None
+
+            left_faces  = [f for f in faces if f["cx"] <  src_w / 2]
+            right_faces = [f for f in faces if f["cx"] >= src_w / 2]
+
+            best_left  = pick_best_face(left_faces,  frame_asd)
+            best_right = pick_best_face(right_faces, frame_asd)
+
+            # Mirror if one side is empty
+            if best_left is None and best_right is not None:
+                best_left = best_right
+            elif best_right is None and best_left is not None:
+                best_right = best_left
+            elif best_left is None and best_right is None:
+                raw_left.append((frame_idx, cx_left))
+                raw_right.append((frame_idx, cx_right))
+                frame_idx += 1
+                continue
+
+            cx_left  = float(np.clip(best_left["cx"],  clamp_left_min,  clamp_left_max))
+            cx_right = float(np.clip(best_right["cx"], clamp_right_min, clamp_right_max))
+
+            raw_left.append((frame_idx, cx_left))
+            raw_right.append((frame_idx, cx_right))
+
+        frame_idx += 1
+
+    cap.release()
+    actual_frames = frame_idx
+
+    if not raw_left:
+        raw_left  = [(0, default_left)]
+        raw_right = [(0, default_right)]
+
+    def _interpolate(keyframes, default, total):
+        arr = np.full(total, default, dtype=float)
+        for i in range(len(keyframes) - 1):
+            fa, ca = keyframes[i]
+            fb, cb = keyframes[i + 1]
+            span = fb - fa
+            if span <= 0:
+                continue
+            for fn in range(fa, min(fb + 1, total)):
+                t = (fn - fa) / span
+                t = t * t * (3 - 2 * t)
+                arr[fn] = ca + (cb - ca) * t
+        if keyframes:
+            arr[keyframes[-1][0]:] = keyframes[-1][1]
+        return arr
+
+    def _smooth(arr, total):
+        out = np.empty(total, dtype=float)
+        out[0] = arr[0]
+        for i in range(1, total):
+            delta = arr[i] - out[i - 1]
+            if abs(delta) <= deadzone_px:
+                out[i] = out[i - 1]
+            else:
+                desired = arr[i] - np.sign(delta) * deadzone_px
+                step = float(np.clip((desired - out[i - 1]) * alpha, -max_step_px, max_step_px))
+                out[i] = out[i - 1] + step
+        return out
+
+    interp_left  = _interpolate(raw_left,  default_left,  actual_frames)
+    interp_right = _interpolate(raw_right, default_right, actual_frames)
+
+    centers_left  = np.clip(_smooth(interp_left,  actual_frames), clamp_left_min,  clamp_left_max)
+    centers_right = np.clip(_smooth(interp_right, actual_frames), clamp_right_min, clamp_right_max)
+
+    stats = {
+        "scene_cuts": 0,
+        "target_keyframes": len(raw_left),
+        "source_cut_resets": 0,
+        "smooth_focus_changes": 0,
+        "hard_crop_jumps": 0,
+    }
+    return centers_left, centers_right, stats

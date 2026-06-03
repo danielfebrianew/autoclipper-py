@@ -7,9 +7,9 @@ from faster_whisper import WhisperModel
 from ultralytics import YOLO
 
 from . import config
-from .ffmpeg_utils import cut_clip, extract_audio, composite
+from .ffmpeg_utils import cut_clip, extract_audio, composite, composite_split
 from .subtitle import write_ass
-from .reframe import compute_crop_centers_streaming
+from .reframe import compute_crop_centers_streaming, compute_dual_crop_centers_streaming
 from .asd import load_asd_model, compute_asd_scores
 from .face import sample_face_frame
 from .logger import get_logger
@@ -37,7 +37,8 @@ def _build_face_tracks(clip_path: str, face_model, src_fps: float) -> list[dict]
     return tracks
 
 
-def process_clip(clip: dict, whisper_model, face_model, asd_model=None, asd_device=None) -> None:
+def process_clip(clip: dict, whisper_model, face_model, asd_model=None, asd_device=None,
+                 mode: str = "single") -> None:
     clip_id     = clip["clip_id"]
     start       = clip["start_time"]
     duration    = str(clip["duration_seconds"])
@@ -62,11 +63,7 @@ def process_clip(clip: dict, whisper_model, face_model, asd_model=None, asd_devi
         words = [w for seg in segments if seg.words for w in seg.words]
         log.debug("[%s] Transkripsi selesai: %d kata", clip_id, len(words))
 
-        log.info("[%s] 📝 Membuat subtitle ASS...", clip_id)
-        write_ass(words, temp_ass)
-        del words
-
-        log.info("[%s] 🎯 Face detection + scene cuts + crop path (single pass)...", clip_id)
+        log.info("[%s] 🎯 Face detection + crop path...", clip_id)
         cap = cv2.VideoCapture(temp_clip)
         src_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         src_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -93,21 +90,40 @@ def process_clip(clip: dict, whisper_model, face_model, asd_model=None, asd_devi
                 log.exception("[%s] ASD gagal, melanjutkan tanpa speaker detection", clip_id)
                 asd_scores = None
 
-        centers, crop_stats = compute_crop_centers_streaming(
-            temp_clip, face_model, src_w, src_h, fps, asd_scores=asd_scores,
-        )
-        log.info(
-            "[%s] Crop stats — scene cuts: %d | hard jumps: %d | focus changes: %d | cut resets: %d",
-            clip_id,
-            crop_stats["scene_cuts"],
-            crop_stats["hard_crop_jumps"],
-            crop_stats["smooth_focus_changes"],
-            crop_stats["source_cut_resets"],
-        )
-
-        log.info("[%s] 🎞️  Rendering final video...", clip_id)
-        composite(temp_clip, centers, src_w, src_h, temp_ass, output_video)
-        del centers
+        if mode == "split":
+            log.info("[%s] Mode split screen — tracking dua speaker...", clip_id)
+            centers_left, centers_right, crop_stats = compute_dual_crop_centers_streaming(
+                temp_clip, face_model, src_w, src_h, fps, asd_scores=asd_scores,
+            )
+            bottom_margin = int(src_h * (1.0 - config.SPLIT_SCREEN_TOP_RATIO))
+            log.info("[%s] 📝 Membuat subtitle ASS (margin bawah %dpx)...", clip_id, bottom_margin)
+            write_ass(words, temp_ass, bottom_margin_px=bottom_margin)
+            del words
+            log.info(
+                "[%s] Crop stats — keyframes: %d",
+                clip_id, crop_stats["target_keyframes"],
+            )
+            log.info("[%s] 🎞️  Rendering split screen...", clip_id)
+            composite_split(temp_clip, centers_left, centers_right, src_w, src_h, temp_ass, output_video)
+            del centers_left, centers_right
+        else:
+            log.info("[%s] 📝 Membuat subtitle ASS...", clip_id)
+            write_ass(words, temp_ass)
+            del words
+            centers, crop_stats = compute_crop_centers_streaming(
+                temp_clip, face_model, src_w, src_h, fps, asd_scores=asd_scores,
+            )
+            log.info(
+                "[%s] Crop stats — scene cuts: %d | hard jumps: %d | focus changes: %d | cut resets: %d",
+                clip_id,
+                crop_stats["scene_cuts"],
+                crop_stats["hard_crop_jumps"],
+                crop_stats["smooth_focus_changes"],
+                crop_stats["source_cut_resets"],
+            )
+            log.info("[%s] 🎞️  Rendering final video...", clip_id)
+            composite(temp_clip, centers, src_w, src_h, temp_ass, output_video)
+            del centers
 
     except Exception:
         log.exception("[%s] Pipeline gagal", clip_id)
@@ -138,9 +154,11 @@ def run() -> None:
     with open(config.json_file, "r", encoding="utf-8") as f:
         data = json.load(f)
 
+    mode = os.environ.get("AUTOCLIPPER_MODE", "single")
+    log.info("Mode: %s", mode)
     log.info("Ditemukan %d clip. Memulai pipeline...", len(data["clips"]))
 
     for clip in data["clips"]:
-        process_clip(clip, whisper_model, face_model, asd_model, asd_device)
+        process_clip(clip, whisper_model, face_model, asd_model, asd_device, mode=mode)
 
     log.info("🎉 Semua pipeline selesai dijalankan!")
