@@ -1,4 +1,4 @@
-from . import config, heatmap, llm, metadata, transcript
+from . import config, heatmap, llm, metadata, transcript, timestamps
 
 
 async def generate(
@@ -10,7 +10,7 @@ async def generate(
 ) -> dict:
     meta = metadata.fetch(youtube_url)
 
-    transcript_text, _ = transcript.fetch(meta["video_id"], language)
+    transcript_text, snippets = transcript.fetch(meta["video_id"], language)
 
     heatmap_data = heatmap.analyze(meta.get("heatmap_raw") or [])
 
@@ -23,11 +23,13 @@ async def generate(
         max_duration=max_duration,
     )
 
-    # Inject source metadata ke output
+    # Inject source metadata sebelum snapping (validate_and_snap butuh video_duration_seconds)
     result["video_title"] = result.get("video_title") or meta["title"]
     result["video_duration"] = result.get("video_duration") or meta["duration_formatted"]
     result["video_duration_seconds"] = meta["duration_seconds"]
     result["source_url"] = youtube_url
     result["heatmap_available"] = heatmap_data["available"]
+
+    timestamps.validate_and_snap(result, snippets)
 
     return result

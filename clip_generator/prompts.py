@@ -8,10 +8,11 @@ Kamu akan menerima:
 
 ATURAN TIMESTAMP (PENTING!):
 - start_time harus mulai MINIMAL 3 detik SEBELUM momen inti dimulai
-- end_time harus berakhir MINIMAL 3 detik SETELAH momen inti selesai
+- end_time harus berakhir SETELAH kalimat penutup topik benar-benar selesai diucapkan — jangan potong di tengah argumen atau kalimat
 - Pastikan potongan mulai dan berakhir di jeda natural (antar kalimat, bukan di tengah kata)
 - Sertakan timestamp dalam format "MM:SS" DAN dalam total detik
-- Lebih baik kelebihan durasi daripada terpotong
+- Lebih baik kelebihan 5–10 detik daripada terpotong
+- end_cue: tulis KATA-KATA TERAKHIR yang benar-benar diucapkan sebelum clip berakhir (kutip verbatim dari transcript, minimal 8 kata)
 
 JIKA HEATMAP DATA TERSEDIA:
 - PRIORITASKAN momen yang ada di atau dekat peak heatmap (terbukti menarik penonton)
@@ -94,7 +95,8 @@ def build_user_prompt(
         "speaker_focus": "nama speaker yang wajahnya paling ekspresif"
       }},
       "suggested_caption": "caption pendek untuk TikTok/Reels #hashtag1 #hashtag2 #hashtag3",
-      "transcript_excerpt": "potongan transcript di momen ini"
+      "transcript_excerpt": "potongan transcript di momen ini",
+      "end_cue": "8-15 kata terakhir yang diucapkan verbatim sebelum clip berakhir"
     }}
   ]
 }}
@@ -104,4 +106,5 @@ ATURAN:
 - Urutkan clips dari viral_score tertinggi ke terendah
 - Jangan overlap antar clip
 - thumbnail.text: 2-5 kata, HURUF KAPITAL, provokatif, bisa dibaca dalam 1 detik
-- thumbnail.timestamp harus berbeda dari start_time — pilih frame paling ekspresif"""
+- thumbnail.timestamp harus berbeda dari start_time — pilih frame paling ekspresif
+- end_cue WAJIB ada dan HARUS berupa kutipan verbatim dari transcript (bukan parafrase) — ini digunakan untuk memastikan clip tidak terpotong sebelum topik selesai"""
