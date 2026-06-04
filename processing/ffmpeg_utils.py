@@ -107,6 +107,7 @@ def composite(temp_clip: str, centers: np.ndarray, src_w: int, src_h: int,
 
 
 def composite_split(temp_clip: str, centers_left: np.ndarray, centers_right: np.ndarray,
+                    centers_single: np.ndarray, is_split: np.ndarray,
                     src_w: int, src_h: int, ass_path: str, output_video: str) -> None:
     """
     Split-screen composite: top 60% has two side-by-side speaker panels,
@@ -171,16 +172,20 @@ def composite_split(temp_clip: str, centers_left: np.ndarray, centers_right: np.
                 break
 
             i = min(frame_idx, len(centers_left) - 1)
-            cx_l = centers_left[i]
-            cx_r = centers_right[i]
 
-            x1_l = int(np.clip(cx_l - panel_w / 2, 0, src_w - panel_w))
-            x1_r = int(np.clip(cx_r - panel_w / 2, 0, src_w - panel_w))
+            if is_split[i]:
+                cx_l = centers_left[i]
+                cx_r = centers_right[i]
+                x1_l = int(np.clip(cx_l - panel_w / 2, 0, src_w - panel_w))
+                x1_r = int(np.clip(cx_r - panel_w / 2, 0, src_w - panel_w))
+                left_crop  = frame[:top_h, x1_l:x1_l + panel_w]
+                right_crop = frame[:top_h, x1_r:x1_r + panel_w]
+                top = np.hstack([left_crop, right_crop])
+            else:
+                cx_s = centers_single[i]
+                x1_s = int(np.clip(cx_s - out_w / 2, 0, src_w - out_w))
+                top = frame[:top_h, x1_s:x1_s + out_w]
 
-            left_crop  = frame[:top_h, x1_l:x1_l + panel_w]
-            right_crop = frame[:top_h, x1_r:x1_r + panel_w]
-
-            top      = np.hstack([left_crop, right_crop])
             out_frame = np.vstack([top, bottom])
             proc.stdin.write(out_frame.tobytes())
             frame_idx += 1

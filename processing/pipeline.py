@@ -92,7 +92,7 @@ def process_clip(clip: dict, whisper_model, face_model, asd_model=None, asd_devi
 
         if mode == "split":
             log.info("[%s] Mode split screen — tracking dua speaker...", clip_id)
-            centers_left, centers_right, crop_stats = compute_dual_crop_centers_streaming(
+            centers_left, centers_right, centers_single, is_split, crop_stats = compute_dual_crop_centers_streaming(
                 temp_clip, face_model, src_w, src_h, fps, asd_scores=asd_scores,
             )
             bottom_margin = int(src_h * (1.0 - config.SPLIT_SCREEN_TOP_RATIO))
@@ -104,7 +104,7 @@ def process_clip(clip: dict, whisper_model, face_model, asd_model=None, asd_devi
                 clip_id, crop_stats["target_keyframes"],
             )
             log.info("[%s] 🎞️  Rendering split screen...", clip_id)
-            composite_split(temp_clip, centers_left, centers_right, src_w, src_h, temp_ass, output_video)
+            composite_split(temp_clip, centers_left, centers_right, centers_single, is_split, src_w, src_h, temp_ass, output_video)
             del centers_left, centers_right
         else:
             log.info("[%s] 📝 Membuat subtitle ASS...", clip_id)

@@ -484,11 +484,19 @@ def compute_dual_crop_centers_streaming(clip_path, face_model, src_w, src_h, src
     max_step_px    = max(1.0, config.CROP_MAX_SPEED_PX_PER_SEC / src_fps)
     alpha          = 1.0 - np.exp(-1.0 / max(src_fps * config.CROP_SMOOTHING_TAU_SEC, 1.0))
 
-    cx_left  = default_left
-    cx_right = default_right
+    cx_left   = default_left
+    cx_right  = default_right
+    cx_single = src_w / 2
 
-    raw_left:  list[tuple[int, float]] = []
-    raw_right: list[tuple[int, float]] = []
+    # clamp for single full-width fallback (same as single-speaker mode)
+    crop_w_single = panel_w * 2
+    clamp_single_min = crop_w_single / 2
+    clamp_single_max = src_w - crop_w_single / 2
+
+    raw_left:   list[tuple[int, float]] = []
+    raw_right:  list[tuple[int, float]] = []
+    raw_single: list[tuple[int, float]] = []
+    raw_is_split: list[tuple[int, bool]] = []
 
     cap = cv2.VideoCapture(clip_path)
     frame_idx = 0
@@ -508,14 +516,18 @@ def compute_dual_crop_centers_streaming(clip_path, face_model, src_w, src_h, src
             best_left  = pick_best_face(left_faces,  frame_asd)
             best_right = pick_best_face(right_faces, frame_asd)
 
-            # Mirror if one side is empty
-            if best_left is None and best_right is not None:
-                best_left = best_right
-            elif best_right is None and best_left is not None:
-                best_right = best_left
-            elif best_left is None and best_right is None:
+            two_faces = best_left is not None and best_right is not None
+
+            if not two_faces:
+                # Single face — full-width fallback
+                single_face = best_left or best_right
+                if single_face is not None:
+                    cx_single = float(np.clip(single_face["cx"], clamp_single_min, clamp_single_max))
+                # hold last cx_left/cx_right (unused but keep consistent)
                 raw_left.append((frame_idx, cx_left))
                 raw_right.append((frame_idx, cx_right))
+                raw_single.append((frame_idx, cx_single))
+                raw_is_split.append((frame_idx, False))
                 frame_idx += 1
                 continue
 
@@ -524,6 +536,8 @@ def compute_dual_crop_centers_streaming(clip_path, face_model, src_w, src_h, src
 
             raw_left.append((frame_idx, cx_left))
             raw_right.append((frame_idx, cx_right))
+            raw_single.append((frame_idx, cx_single))
+            raw_is_split.append((frame_idx, True))
 
         frame_idx += 1
 
@@ -531,8 +545,10 @@ def compute_dual_crop_centers_streaming(clip_path, face_model, src_w, src_h, src
     actual_frames = frame_idx
 
     if not raw_left:
-        raw_left  = [(0, default_left)]
-        raw_right = [(0, default_right)]
+        raw_left   = [(0, default_left)]
+        raw_right  = [(0, default_right)]
+        raw_single = [(0, src_w / 2)]
+        raw_is_split = [(0, False)]
 
     def _interpolate(keyframes, default, total):
         arr = np.full(total, default, dtype=float)
@@ -563,11 +579,19 @@ def compute_dual_crop_centers_streaming(clip_path, face_model, src_w, src_h, src
                 out[i] = out[i - 1] + step
         return out
 
-    interp_left  = _interpolate(raw_left,  default_left,  actual_frames)
-    interp_right = _interpolate(raw_right, default_right, actual_frames)
+    interp_left   = _interpolate(raw_left,   default_left,  actual_frames)
+    interp_right  = _interpolate(raw_right,  default_right, actual_frames)
+    interp_single = _interpolate(raw_single, src_w / 2,     actual_frames)
 
-    centers_left  = np.clip(_smooth(interp_left,  actual_frames), clamp_left_min,  clamp_left_max)
-    centers_right = np.clip(_smooth(interp_right, actual_frames), clamp_right_min, clamp_right_max)
+    centers_left   = np.clip(_smooth(interp_left,   actual_frames), clamp_left_min,   clamp_left_max)
+    centers_right  = np.clip(_smooth(interp_right,  actual_frames), clamp_right_min,  clamp_right_max)
+    centers_single = np.clip(_smooth(interp_single, actual_frames), clamp_single_min, clamp_single_max)
+
+    # is_split: dense boolean array — nearest-neighbour from sampled keyframes
+    is_split = np.zeros(actual_frames, dtype=bool)
+    for i, (fn, val) in enumerate(raw_is_split):
+        next_fn = raw_is_split[i + 1][0] if i + 1 < len(raw_is_split) else actual_frames
+        is_split[fn:next_fn] = val
 
     stats = {
         "scene_cuts": 0,
@@ -576,4 +600,4 @@ def compute_dual_crop_centers_streaming(clip_path, face_model, src_w, src_h, src
         "smooth_focus_changes": 0,
         "hard_crop_jumps": 0,
     }
-    return centers_left, centers_right, stats
+    return centers_left, centers_right, centers_single, is_split, stats
