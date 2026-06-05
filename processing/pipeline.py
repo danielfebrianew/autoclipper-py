@@ -31,7 +31,7 @@ def _build_face_tracks(clip_path: str, face_model, src_fps: float) -> list[dict]
         if frame_idx % frame_interval == 0:
             faces = sample_face_frame(frame, face_model)
             for face in faces:
-                tracks.append({"frame": frame_idx, "box": face["box"], "cx": face["cx"]})
+                tracks.append({"frame": frame_idx, "box": face.box, "cx": face.cx})
         frame_idx += 1
     cap.release()
     return tracks

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Optional
 
 from pydantic import BaseModel
 
@@ -79,6 +80,33 @@ class ClipsJson(BaseModel):
     video_duration_seconds: int = 0
     source_url: str = ""
     heatmap_available: bool = False
+
+
+# ── Focus Tracker State ───────────────────────────────────────────────────
+
+@dataclass
+class FocusTrackerState:
+    current_cx: Optional[float] = None
+    current_area: float = 0.0
+    last_seen_frame: int = field(default_factory=lambda: -(10**9))
+    lock_until_frame: int = -1
+    pending_cx: Optional[float] = None
+    pending_since_frame: Optional[int] = None
+    prev_sample_frame: int = -1
+
+    def is_locked(self, frame_idx: int) -> bool:
+        return frame_idx < self.lock_until_frame
+
+    def lost_too_long(self, frame_idx: int, grace_frames: int) -> bool:
+        return frame_idx - self.last_seen_frame > grace_frames
+
+    def reset_pending(self) -> None:
+        self.pending_cx = None
+        self.pending_since_frame = None
+
+    def lock(self, frame_idx: int, min_lock_frames: int) -> None:
+        self.lock_until_frame = frame_idx + min_lock_frames
+        self.reset_pending()
 
 
 # ── Render Job ────────────────────────────────────────────────────────────────
