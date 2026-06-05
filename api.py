@@ -190,10 +190,11 @@ class GenerateClipsRequest(BaseModel):
 
 @app.post("/api/generate-clips")
 async def generate_clips(req: GenerateClipsRequest):
-    from clip_generator import generate as run_pipeline
+    from services.clip_generation import ClipGenerationService
 
+    svc = ClipGenerationService()
     try:
-        clips_json = await run_pipeline(
+        clips_json = await svc.generate(
             youtube_url=req.youtube_url,
             max_clips=req.max_clips,
             min_duration=req.min_duration,
