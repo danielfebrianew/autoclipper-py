@@ -72,7 +72,7 @@ def process_clip(clip: dict, whisper_model, face_model, asd_model=None, asd_devi
         cap.release()
 
         asd_scores = None
-        if asd_model is not None:
+        if asd_model is not None and asd_device is not None:
             log.info("[%s] 🗣️  Active speaker detection (Light-ASD)...", clip_id)
             try:
                 face_tracks = _build_face_tracks(temp_clip, face_model, fps)

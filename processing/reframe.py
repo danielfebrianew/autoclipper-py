@@ -99,6 +99,9 @@ def _apply_crop_smoothing(raw_targets, scene_cut_frames, crop_w, total_frames,
 
 class _SceneCutState:
     __slots__ = ("prev_gray", "prev_hist", "last_cut_frame")
+    prev_gray: np.ndarray | None
+    prev_hist: np.ndarray | None
+    last_cut_frame: int
 
     def __init__(self, min_gap_frames: int):
         self.prev_gray = None
@@ -186,6 +189,7 @@ def _update_focus(
         state.prev_sample_frame = frame_idx
         return
 
+    assert state.current_cx is not None
     # Track current subject
     current_face = match_face_by_center(faces, state.current_cx, match_distance_px)
     current_visible = current_face is not None
@@ -202,9 +206,10 @@ def _update_focus(
         state.reset_pending()
 
     # Candidate switch logic
-    other_faces = [f for f in faces if abs(f.cx - state.current_cx) > match_distance_px]
+    tracked_cx: float = state.current_cx  # type: ignore[assignment]  # assert above guarantees non-None
+    other_faces = [f for f in faces if abs(f.cx - tracked_cx) > match_distance_px]
     candidate = pick_best_face(other_faces, frame_asd) if other_faces else (
-        best_face if best_face is not None and abs(best_face.cx - state.current_cx) > match_distance_px else None
+        best_face if best_face is not None and abs(best_face.cx - tracked_cx) > match_distance_px else None
     )
 
     can_switch = not state.is_locked(frame_idx)
@@ -213,7 +218,8 @@ def _update_focus(
         candidate_is_better = current_lost_too_long or size_wins
 
         if candidate_is_better:
-            if state.pending_cx is None or abs(candidate.cx - state.pending_cx) > match_distance_px:
+            pending_cx = state.pending_cx
+            if pending_cx is None or abs(candidate.cx - pending_cx) > match_distance_px:
                 state.pending_cx = candidate.cx
                 state.pending_since_frame = frame_idx
             else:
@@ -222,9 +228,10 @@ def _update_focus(
             if state.pending_since_frame is None:
                 state.pending_since_frame = frame_idx
 
-            pending_age = frame_idx - state.pending_since_frame
+            pending_since: int = state.pending_since_frame
+            pending_age = frame_idx - pending_since
             if pending_age >= confirm_frames:
-                if abs(candidate.cx - state.current_cx) > match_distance_px * 0.5:
+                if abs(candidate.cx - tracked_cx) > match_distance_px * 0.5:
                     smooth_focus_changes_ref[0] += 1
                 state.current_cx = candidate.cx
                 state.current_area = candidate.area
@@ -308,6 +315,7 @@ def compute_crop_centers(face_data, scene_cut_frames, src_w, src_h, total_frames
             state.prev_sample_frame = frame_num
             continue
 
+        assert state.current_cx is not None
         current_face = match_face_by_center(faces, state.current_cx, match_distance_px)
         current_visible = current_face is not None
         current_lost_too_long = state.lost_too_long(frame_num, lost_grace_frames)
@@ -322,9 +330,10 @@ def compute_crop_centers(face_data, scene_cut_frames, src_w, src_h, total_frames
             state.current_area = 0.0
             state.reset_pending()
 
-        other_faces = [f for f in faces if abs(f.cx - state.current_cx) > match_distance_px]
+        current_cx: float = state.current_cx  # type: ignore[assignment]  # assert above guarantees non-None
+        other_faces = [f for f in faces if abs(f.cx - current_cx) > match_distance_px]
         candidate = pick_best_face(other_faces, frame_asd) if other_faces else (
-            best_face if best_face is not None and abs(best_face.cx - state.current_cx) > match_distance_px else None
+            best_face if best_face is not None and abs(best_face.cx - current_cx) > match_distance_px else None
         )
 
         can_switch = not state.is_locked(frame_num)
@@ -333,7 +342,8 @@ def compute_crop_centers(face_data, scene_cut_frames, src_w, src_h, total_frames
             candidate_is_better = current_lost_too_long or size_wins
 
             if candidate_is_better:
-                if state.pending_cx is None or abs(candidate.cx - state.pending_cx) > match_distance_px:
+                pending_cx_n = state.pending_cx
+                if pending_cx_n is None or abs(candidate.cx - pending_cx_n) > match_distance_px:
                     state.pending_cx = candidate.cx
                     state.pending_since_frame = frame_num
                 else:
@@ -341,9 +351,10 @@ def compute_crop_centers(face_data, scene_cut_frames, src_w, src_h, total_frames
 
                 if state.pending_since_frame is None:
                     state.pending_since_frame = frame_num
-                pending_age = frame_num - state.pending_since_frame
+                pending_since_n: int = state.pending_since_frame
+                pending_age = frame_num - pending_since_n
                 if pending_age >= confirm_frames:
-                    if abs(candidate.cx - state.current_cx) > match_distance_px * 0.5:
+                    if abs(candidate.cx - current_cx) > match_distance_px * 0.5:
                         smooth_focus_changes_ref[0] += 1
                     state.current_cx = candidate.cx
                     state.current_area = candidate.area
@@ -525,9 +536,7 @@ def compute_dual_crop_centers_streaming(clip_path, face_model, src_w, src_h, src
             best_left  = pick_best_face(left_faces,  frame_asd)
             best_right = pick_best_face(right_faces, frame_asd)
 
-            two_faces = best_left is not None and best_right is not None
-
-            if not two_faces:
+            if best_left is None or best_right is None:
                 single_face = best_left or best_right
                 if single_face is not None:
                     cx_single = float(np.clip(single_face.cx, clamp_single_min, clamp_single_max))
