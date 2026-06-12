@@ -2,6 +2,9 @@
 .env.local
 .env.*.local
 
+.claude/
+.vscode/
+
 auto-clipper-env/
 __pycache__/
 *.pyc
