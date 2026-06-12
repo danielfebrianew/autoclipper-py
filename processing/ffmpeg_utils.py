@@ -88,7 +88,10 @@ def composite(temp_clip: str, centers: np.ndarray, src_w: int, src_h: int,
             x1 = int(cx - crop_w / 2)
             x1 = max(0, min(x1, src_w - crop_w))
             cropped = frame[:, x1:x1 + crop_w]
-            proc.stdin.write(cropped.tobytes())
+            try:
+                proc.stdin.write(cropped.tobytes())
+            except BrokenPipeError:
+                break
             frame_idx += 1
     finally:
         cap.release()
@@ -187,7 +190,10 @@ def composite_split(temp_clip: str, centers_left: np.ndarray, centers_right: np.
                 top = frame[:top_h, x1_s:x1_s + out_w]
 
             out_frame = np.vstack([top, bottom])
-            proc.stdin.write(out_frame.tobytes())
+            try:
+                proc.stdin.write(out_frame.tobytes())
+            except BrokenPipeError:
+                break
             frame_idx += 1
     finally:
         cap.release()
