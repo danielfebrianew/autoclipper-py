@@ -25,6 +25,11 @@ def extract_audio(src_video: str, dest_wav: str) -> None:
     ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
 
 
+def _escape_ass_path(path: str) -> str:
+    # FFmpeg filter option values: escape \ then : then '
+    return path.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
+
+
 def _escape_drawtext(text: str) -> str:
     return text.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
 
@@ -36,8 +41,8 @@ def composite(temp_clip: str, centers: np.ndarray, src_w: int, src_h: int,
     cap = cv2.VideoCapture(temp_clip)
     src_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
 
-    safe_ass = ass_path.replace("\\", "/").replace(":", "\\:")
-    filters = [f"ass={safe_ass}"]
+    safe_ass = _escape_ass_path(ass_path)
+    filters = [f"ass=filename={safe_ass}"]
 
     if config.source_credit.strip():
         txt = _escape_drawtext(config.source_credit.strip())
@@ -123,8 +128,8 @@ def composite_split(temp_clip: str, centers_left: np.ndarray, centers_right: np.
     cap     = cv2.VideoCapture(temp_clip)
     src_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
 
-    safe_ass = ass_path.replace("\\", "/").replace(":", "\\:")
-    filters  = [f"ass={safe_ass}"]
+    safe_ass = _escape_ass_path(ass_path)
+    filters  = [f"ass=filename={safe_ass}"]
 
     if config.source_credit.strip():
         txt = _escape_drawtext(config.source_credit.strip())
